@@ -29,6 +29,8 @@ class AutogradInfluenceModule(BaseInfluenceModule):
         check_eigvals: if ``True``, this initializer checks that the damped risk Hessian
             is positive definite, and raises a :mod:`ValueError` if it is not. Otherwise,
             no check is performed.
+        store_as_hessian: if ``True``, damped risk Hessian is stores in object and any access to
+            inverse Hessian will be lazy. Otherwise, inverse Hessian is computed immediately.
 
     Warnings:
         This module scales poorly with the number of model parameters :math:`d`. In
@@ -45,7 +47,8 @@ class AutogradInfluenceModule(BaseInfluenceModule):
             test_loader: data.DataLoader,
             device: torch.device,
             damp: float,
-            check_eigvals: bool = False
+            check_eigvals: bool = False,
+            store_as_hessian: bool = False
     ):
         super().__init__(
             model=model,
@@ -55,6 +58,7 @@ class AutogradInfluenceModule(BaseInfluenceModule):
             device=device,
         )
 
+        self.store_as_hessian = store_as_hessian
         self.damp = damp
 
         params = self._model_make_functional()
@@ -68,7 +72,7 @@ class AutogradInfluenceModule(BaseInfluenceModule):
                 self._model_reinsert_params(self._reshape_like_params(theta_))
                 return self.objective.train_loss(self.model, theta_, batch)
 
-            hess_batch = torch.autograd.functional.hessian(f, flat_params).detach()
+            hess_batch = torch.autograd.functional.hessian(f, flat_params).detach().cpu()
             hess = hess + hess_batch * batch_size
 
         with torch.no_grad():
@@ -77,16 +81,32 @@ class AutogradInfluenceModule(BaseInfluenceModule):
             hess = hess + damp * torch.eye(d, device=hess.device)
 
             if check_eigvals:
-                eigvals = np.linalg.eigvalsh(hess.cpu().numpy())
+                eigvals = torch.linalg.eigvalsh(hess.cpu()).numpy()
                 logging.info("hessian min eigval %f", np.min(eigvals).item())
                 logging.info("hessian max eigval %f", np.max(eigvals).item())
                 if not bool(np.all(eigvals >= 0)):
                     raise ValueError()
 
-            self.inverse_hess = torch.inverse(hess)
+            if self.store_as_hessian:
+                self.hess = hess
+                self.inverse_hess = None
+            else:
+                self.inverse_hess = torch.inverse(hess)
+
+    def get_hessian(self):
+        if not self.store_as_hessian:
+            raise NotImplementedError("To access damped risk Hessian, set store_as_hessian to True.")
+        return self.hess
+
+    def get_inverse_hessian(self):
+        if self.inverse_hess is None:
+            # Lazy inverse computation
+            self.inverse_hess = torch.inverse(self.hess)
+        return self.inverse_hess
 
     def inverse_hvp(self, vec):
-        return self.inverse_hess @ vec
+        inverse_hess = self.get_inverse_hessian()
+        return inverse_hess @ vec
 
 
 class CGInfluenceModule(BaseInfluenceModule):
