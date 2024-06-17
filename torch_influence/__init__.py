@@ -10,7 +10,8 @@ __all__ = [
     "AutogradInfluenceModule",
     "CGInfluenceModule",
     "LiSSAInfluenceModule",
+    "HVPModule"
 ]
 
 from torch_influence.base import BaseInfluenceModule, BaseObjective
-from torch_influence.modules import AutogradInfluenceModule, CGInfluenceModule, LiSSAInfluenceModule
+from torch_influence.modules import AutogradInfluenceModule, CGInfluenceModule, LiSSAInfluenceModule, HVPModule
