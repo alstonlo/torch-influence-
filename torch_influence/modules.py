@@ -168,6 +168,7 @@ class CGInfluenceModule(BaseInfluenceModule):
         params = self._model_make_functional()
         flat_params = self._flatten_params_like(params)
 
+        # Know which device tensors should sit on
         if self.use_cupy:
             if self.device == "cuda":
                 device_id = 0
@@ -199,11 +200,11 @@ class CGInfluenceModule(BaseInfluenceModule):
             """
 
             if self.use_cupy:
-                # Wrap as cupy array
+                # Wrap as cupy array, but create a copy
+                # return cp.asarray(hvp.cpu().numpy())
                 # Get ID that self.device corresponds to
-                return cp.asarray(hvp)
-                # with cp.cuda.Device(device_id):
-                    # return cp.asarray(hvp.cpu().numpy())
+                with cp.cuda.Device(device_id):
+                    return cp.asarray(hvp.cpu().numpy())
             return hvp.cpu().numpy()
 
         d = vec.shape[0]
@@ -238,11 +239,11 @@ class CGInfluenceModule(BaseInfluenceModule):
             # Solve using conjugate gradients
             ihvp = gpytorch.utils.linear_cg(hvp_fn, vec_tensor, **self.cg_kwargs)
             """
-            
-            linop = L_gpu.LinearOperator((d, d), matvec=hvp_fn)
+
             with cp.cuda.Device(device_id):
-                vec_ = cp.asarray(vec.cpu().numpy())
-            ihvp  = L_gpu.cg(A=linop, b=vec_, **self.cg_kwargs)[0]
+                linop = L_gpu.LinearOperator((d, d), matvec=hvp_fn)
+                vec_ = cp.asarray(vec)
+                ihvp  = L_gpu.cg(A=linop, b=vec_, **self.cg_kwargs)[0]
         else:
             # Slow Scipy-based method
             linop = L.LinearOperator((d, d), matvec=hvp_fn)
@@ -251,6 +252,8 @@ class CGInfluenceModule(BaseInfluenceModule):
         with torch.no_grad():
             self._model_reinsert_params(self._reshape_like_params(flat_params), register=True)
 
+        # if self.use_cupy:
+            # return torch.as_tensor(ihvp, device=self.device)
         return torch.tensor(ihvp, device=self.device)
 
 
